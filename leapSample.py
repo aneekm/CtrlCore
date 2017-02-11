@@ -65,78 +65,154 @@ class Runtime(object):
         self.listener = SampleListener()
         self.controller = Leap.Controller()
 
-        self.screenWidth = 200 # 1280
-        self.screenHeight = 200 # 960
+        self.controller.enable_gesture(Leap.Gesture.TYPE_SWIPE)
+        self.minSwipeLength = 500
+        self.minSwipeVelocity = 1000
+        self.controller.config.set("Gesture.Swipe.MinLength", self.minSwipeLength)
+        self.controller.config.set("Gesture.Swipe.MinVelocity", self.minSwipeVelocity)
+        self.controller.config.save()
+
+        self.screenWidth = 600 # 1280
+        self.screenHeight = 600 # 960
         self.screen = pygame.display.set_mode((self.screenWidth,self.screenHeight)) # FULLSCREEN
         
         self.frameSurface = pygame.Surface((self.screen.get_width(),self.screen.get_height()))
         self.bgColor = (0,0,0)
-
-        # self.gameMode = 
 
         self.clock = pygame.time.Clock()
         self.fps = 60
 
         self.joints = [] # stores .x .y .z values
 
-        self.done = False
+        self.doneRunning = False
+
+        self.tableDepth = 0
+        self.hoverBuffer = 100
 
         self.hoveringColor = (150,0,250)
         self.touchingColor = (0,255,0)
 
-    def updateFingerData(self):
-        frame = self.controller.frame()
-        self.joints = frame.hands
+        self.offsetX,self.offsetY,self.projectionWidth,self.projectionHeight = self.runCalibration()
+
+    def invertPoints(self,x,y):
+        nx = self.screenWidth - x
+        ny = self.screenHeight - y
+        return nx,ny
+
+    def spacialToPixel(self,x,y):
+        nx = x - self.offsetX
+        ny = y - self.offsetY
+        ny = -ny
+        self.projectionWidth = abs(self.projectionWidth)
+        self.projectionHeight = abs(self.projectionHeight)
+        nx = abs(nx*self.screenWidth/self.projectionWidth)
+        ny = abs(ny*self.screenHeight/self.projectionHeight)
+        return nx,ny
+
+    def runCalibration(self):
+        calibrated = False
+
+        coords = []
+
+        while not calibrated:
+
+
+            self.screen.fill(self.bgColor)
+            self.drawCalib()
+
+            frame = self.controller.frame()
+            self.updateFingerData(frame)
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and len(self.joints) > 0:
+                    coords.append((self.joints[0],self.joints[2]))
+                    self.tableDepth += self.joints[1]
+                    if len(coords) == 2:
+                        calibrated = True
+                        break
+
+        x0,y0 = coords[0] 
+        x1,y1 = coords[1]
+        width = abs(x1 - x0)
+        height = abs(y1 - y0)
+        self.tableDepth = self.tableDepth/2
+        return x0,y0,width,height
+                        
+    def drawCalib(self):
+        color = (0,255,0) if len(self.joints) > 0 else (150,0,250)
+        pygame.draw.rect(self.screen,color,(0,0,self.screenWidth,self.screenHeight))
+        pygame.display.flip()
+
+    def isTouchingSurface(self):
+        return self.joints[1] > self.tableDepth
+
+    def isHoveringSurface(self):
+        return self.joints[1] > self.tableDepth - self.hoverBuffer
+
+    def updateFingerData(self,frame):
+        self.joints = []
+        if len(frame.hands) > 0:
+            finger = frame.hands[0].fingers.frontmost
+            self.joints = [finger.tip_position.x,finger.tip_position.y,finger.tip_position.z]
 
     def timerFired(self):
-        self.updateFingerData()
-
+        frame = self.controller.frame()
+        self.updateFingerData(frame)
 
     def fingerTouchingSurface(self):
-        for hand in self.joints:
-            for finger in hand.pointables:
-                if finger.tip_position.y > 800:
-                    print finger
-                    return True
-        return False
+        return len(self.joints) > 0 and self.isTouchingSurface()
+    
 
     def fingerHoveringSurface(self):
-        for hand in self.joints:
-            for finger in hand.pointables:
-                if finger.tip_position.y > 700:
-                    print finger
-                    return True
-        return False
+        return len(self.joints) > 0 and self.isHoveringSurface()
 
 
     def keyPressed(self,key):
         if key == pygame.K_ESCAPE or key == pygame.K_BACKSPACE:
-            self.done = True
+            self.doneRunning = True
         elif key == pygame.K_SPACE:
             print 'getting data'
-            for hand in self.joints:
-                for finger in hand.pointables:
-                    tip = finger.tip_position
-                    print 'X: %d, Y: %d, Z: %d' % (
-                        tip.x, tip.y, tip.z)
+            if len(self.joints) > 0:
+                print 'X: %d, Y: %d, Z: %d' % (
+                        self.joints[0], self.joints[1], self.joints[2])
+
+    def drawCirclesOnFingertip(self):
+        if len(self.joints) > 0:
+            if self.isTouchingSurface():
+                color = self.touchingColor
+            elif self.isHoveringSurface():
+                color = self.hoveringColor
+            else:
+                color = self.bgColor
+            cx,cy = self.joints[0],self.joints[2]
+            nx,ny = self.spacialToPixel(cx,cy)
+            x,y = self.invertPoints(nx,ny)
+            pygame.draw.circle(self.screen,color,(int(x),int(y)),20)
 
 
     def redrawAll(self):
+        if len(self.joints) > 0:
+            pygame.draw.rect(self.screen,(255,255,255),(0,0,20,20))
+            self.drawCirclesOnFingertip()
+        '''
         if self.fingerTouchingSurface():
-            pygame.draw.circle(self.screen,self.touchingColor,(self.screenWidth//2,self.screenHeight//2),self.screenHeight//2)
+            pygame.draw.circle(self.screen,self.touchingColor,(self.screenWidth//2,self.screenHeight//2),self.screenHeight//4)
         elif self.fingerHoveringSurface():
-            pygame.draw.circle(self.screen,self.hoveringColor,(self.screenWidth//2,self.screenHeight//2),self.screenHeight//2)
+            pygame.draw.circle(self.screen,self.hoveringColor,(self.screenWidth//2,self.screenHeight//2),self.screenHeight//4)
+'''
 
     def run(self):
 
-        while not self.done:
+        while not self.doneRunning:
 
             self.clock.tick(self.fps)
             self.timerFired()
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
-                    self.done = True
+                    self.doneRunning = True
                 elif event.type == pygame.KEYDOWN:
                     self.keyPressed(event.key)
 
