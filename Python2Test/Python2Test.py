@@ -134,7 +134,7 @@ class PygameGame(object):
             if self.musicState <= 11:
                 self.musicState += 1
             elif self.musicState == 12:
-                self.musicState = 13
+                self.musicState = 0
                 self.mode = self.MENU
         if self.mode == self.MUSIC:
             if self.musicState < 16:
